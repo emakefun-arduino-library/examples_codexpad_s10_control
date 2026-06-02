@@ -1,0 +1,142 @@
+/**
+ * @~Chinese
+ * @brief 使用CodexPad-S10手柄控制4个舵机。
+ * @details 通过手柄按钮操作4个舵机：
+ *          - Square按钮（按下）：设置4个舵机角度为 0 度。
+ *          - Triangle按钮（按下）：设置4个舵机角度为 90 度。
+ *          - Circle按钮（按下）：设置4个舵机角度为 180 度。
+ */
+/**
+ * @~English
+ * @brief Control 4 servos using CodexPad-S10 gamepad.
+ * @details Control 4 servos with gamepad buttons:
+ *          - Square button (pressed): Set all 4 servos to 0 degrees.
+ *          - Triangle button (pressed): Set all 4 servos to 90 degrees.
+ *         - Circle button (pressed): Set all 4 servos to 180 degrees.
+ */
+
+#include "codex_pad.h"
+#include "servo.h"
+
+namespace {
+// 替换为你的 CodexPad 的 Bluetooth device address。
+// Replace with your CodexPad device's Bluetooth device address.
+const std::string kBluetoothDeviceAddress = "16:00:00:00:03:27";
+
+constexpr gpio_num_t kServo0Pin = GPIO_NUM_26;  // 舵机0引脚。 | Servo 1 pin.
+constexpr gpio_num_t kServo1Pin = GPIO_NUM_25;  // 舵机1引脚。 | Servo 2 pin.
+constexpr gpio_num_t kServo2Pin = GPIO_NUM_33;  // 舵机2引脚。 | Servo 3 pin.
+constexpr gpio_num_t kServo3Pin = GPIO_NUM_32;  // 舵机3引脚。 | Servo 4 pin.
+
+constexpr uint8_t kServoAngleMax = 180;           // 舵机最大角度。 | Servo maximum angle.
+constexpr uint16_t kServoPulseWidthUsMin = 500;   // 最小脉宽，单位微秒。 | Minimum pulse width in microseconds
+constexpr uint16_t kServoPulseWidthUsMax = 2500;  // 最大脉宽，单位微秒。 | Maximum pulse width in microseconds
+
+constexpr uint8_t kServoUpdateIntervalMs = 100;  // 舵机更新间隔，单位毫秒。 | Servo update interval in milliseconds.
+
+constexpr uint32_t kConnectionTimeoutMs = 5000;  // 连接手柄超时时间，单位毫秒。 | Connection timeout for gamepad in milliseconds.
+
+uint32_t g_servo_last_update_time = 0;
+
+em::Servo g_servo_0(kServo0Pin, 0, kServoAngleMax, kServoPulseWidthUsMin, kServoPulseWidthUsMax);
+em::Servo g_servo_1(kServo1Pin, 0, kServoAngleMax, kServoPulseWidthUsMin, kServoPulseWidthUsMax);
+em::Servo g_servo_2(kServo2Pin, 0, kServoAngleMax, kServoPulseWidthUsMin, kServoPulseWidthUsMax);
+em::Servo g_servo_3(kServo3Pin, 0, kServoAngleMax, kServoPulseWidthUsMin, kServoPulseWidthUsMax);
+
+CodexPad g_codex_pad;
+
+void Connect() {
+  printf("Start to connect %s\n", kBluetoothDeviceAddress.c_str());
+  // 连接到指定蓝牙设备地址的手柄。
+  // Connect to the CodexPad with specified Bluetooth device address.
+  while (!g_codex_pad.Connect(kBluetoothDeviceAddress, kConnectionTimeoutMs)) {
+    printf("Retry to connect %s\n", kBluetoothDeviceAddress.c_str());
+  }
+
+  if (const auto ble_client = g_codex_pad.ble_client(); ble_client != nullptr) {
+    printf("Remote Bluetooth Device Address: %s\n", ble_client->getPeerAddress().toString().c_str());
+  } else {
+    printf("Remote Bluetooth Device Address: unknown.\n");
+  }
+
+  // 设置发射功率为0dBm。
+  // 发射功率影响通信距离和功耗：功率越高，通信距离越远，但功耗也越大。
+  // 建议根据实际应用场景选择合适的功率等级以平衡距离和电池寿命。
+  // Set transmission power to 0dBm.
+  // Transmission power affects communication range and power consumption:
+  // Higher power provides longer range but consumes more battery.
+  // Choose appropriate power level based on your application to balance range and battery life.
+  if (g_codex_pad.set_remote_tx_power(CodexPad::TxPower::k0dBm)) {
+    printf("Set remote tx power to 0dBm successfully.\n");
+  }
+
+  printf("Connected.\n");
+}
+
+void ServosInit() {
+  printf("Servos init.\n");
+  g_servo_0.Init();
+  g_servo_1.Init();
+  g_servo_2.Init();
+  g_servo_3.Init();
+
+  g_servo_0.Write(0);
+  g_servo_1.Write(0);
+  g_servo_2.Write(0);
+  g_servo_3.Write(0);
+}  // namespace
+
+void SetServosAngle(const uint8_t angle) {
+  if (angle > kServoAngleMax) {
+    printf("Invalid servo angle: %u. Must be between 0 and %u.\n", angle, kServoAngleMax);
+    return;
+  }
+  printf("Set all servos to %u degrees.\n", angle);
+  g_servo_0.Write(angle);
+  g_servo_1.Write(angle);
+  g_servo_2.Write(angle);
+  g_servo_3.Write(angle);
+}
+}  // namespace
+
+void setup() {
+  ServosInit();
+
+  printf("CodexPad Init.\n");
+  g_codex_pad.Init();
+
+  Connect();
+}
+
+void loop() {
+  // 重要：Update()方法必须在循环中尽可能频繁地调用，不能添加延时。
+  // 该方法负责处理所有接收到的蓝牙数据包，延时会导致数据丢失和响应延迟。
+  // 对于实时控制应用，必须保持高频率调用以确保及时响应手柄输入。
+  // Important: Update() method must be called as frequently as possible in the loop, no delays should be added.
+  // This method processes all received Bluetooth packets, delays will cause data loss and response lag.
+  // For real-time control applications, high-frequency calls are essential to ensure prompt response to gamepad input.
+  g_codex_pad.Update();
+
+  if (!g_codex_pad.is_connected()) {
+    printf("Disconnected, start to reconnect.\n");
+    Connect();
+    return;
+  }
+
+  if (millis() - g_servo_last_update_time >= kServoUpdateIntervalMs) {
+    const bool square = g_codex_pad.pressed(CodexPad::Button::kSquareX);
+    const bool triangle = g_codex_pad.pressed(CodexPad::Button::kTriangleY);
+    const bool circle = g_codex_pad.pressed(CodexPad::Button::kCircleB);
+
+    if (square && !circle && !triangle) {
+      SetServosAngle(0);
+      g_servo_last_update_time = millis();
+    } else if (triangle && !square && !circle) {
+      SetServosAngle(90);
+      g_servo_last_update_time = millis();
+    } else if (circle && !square && !triangle) {
+      SetServosAngle(180);
+      g_servo_last_update_time = millis();
+    }
+  }
+}

@@ -61,8 +61,9 @@ constexpr uint32_t kReductionRatio = 90;  // 减速比。 | Reduction ratio.
 // 编码电机正转时B相领先于A相。 | When the encoder motor runs forward, phase B leads phase A.
 constexpr auto kEncoderPhaseRelation = em::EncoderMotor::kBPhaseLeads;
 
-constexpr uint16_t kMotorRunPwmDuty = 1023;  // 电机运行时的PWM占空比。 | PWM duty when motor is running.
-constexpr uint8_t kMotorStopPwmDuty = 0;     // 电机停止时的PWM占空比。 | PWM duty when motor is stopped.
+constexpr float kSpeedPidP = 1.5;  // 速度PID比例系数。 | Speed PID proportional coefficient.
+constexpr float kSpeedPidI = 1.5;  // 速度PID积分系数。 | Speed PID integral coefficient.
+constexpr float kSpeedPidD = 1.0;  // 速度PID微分系数。 | Speed PID derivative coefficient.
 
 constexpr uint8_t kServoAngleMax = 180;           // 舵机最大角度。 | Servo maximum angle.
 constexpr uint16_t kServoPulseWidthUsMin = 500;   // 最小脉宽，单位微秒。 | Minimum pulse width in microseconds
@@ -142,7 +143,7 @@ void Connect() {
   printf("Connected.\n");
 }
 
-void MotorInit() {
+void EncoderMotorInit() {
   printf("Encoder motor driver init.\n");
   g_encoder_motor_0.Init();
   g_encoder_motor_1.Init();
@@ -161,6 +162,11 @@ void ServosInit() {
   g_servo_1.Init();
   g_servo_2.Init();
   g_servo_3.Init();
+
+  g_encoder_motor_0.SetSpeedPid(kSpeedPidP, kSpeedPidI, kSpeedPidD);
+  g_encoder_motor_1.SetSpeedPid(kSpeedPidP, kSpeedPidI, kSpeedPidD);
+  g_encoder_motor_2.SetSpeedPid(kSpeedPidP, kSpeedPidI, kSpeedPidD);
+  g_encoder_motor_3.SetSpeedPid(kSpeedPidP, kSpeedPidI, kSpeedPidD);
 
   g_servo_0.Write(0);
   g_servo_1.Write(0);
@@ -182,7 +188,7 @@ void SetServosAngle(const uint8_t angle) {
 }  // namespace
 
 void setup() {
-  MotorInit();
+  EncoderMotorInit();
   ServosInit();
 
   printf("CodexPad Init.\n");
@@ -248,12 +254,15 @@ void loop() {
     const bool circle = g_codex_pad.pressed(CodexPad::Button::kCircleB);
 
     if (square && !circle && !triangle) {
+      // Square按钮：设置舵机角度为0度 | Square button: set servo angle to 0 degrees.
       SetServosAngle(0);
       g_servo_last_update_time = millis();
     } else if (triangle && !square && !circle) {
+      // Triangle按钮：设置舵机角度为90度 | Triangle button: set servo angle to 90 degrees.
       SetServosAngle(90);
       g_servo_last_update_time = millis();
     } else if (circle && !square && !triangle) {
+      // Circle按钮：设置舵机角度为180度 | Circle button: set servo angle to 180 degrees.
       SetServosAngle(180);
       g_servo_last_update_time = millis();
     }

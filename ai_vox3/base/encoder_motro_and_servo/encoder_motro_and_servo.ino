@@ -1,21 +1,28 @@
 /**
  * @~Chinese
- * @brief 使用CodexPad-S10手柄控制4个舵机。
- * @details 通过手柄按钮操作4个舵机：
+ * @brief 使用CodexPad-S10手柄控制4个编码电机和4个舵机。
+ * @details 通过手柄按钮控制编码4个电机和4个舵机：
+ *          - 上方向按钮（按住）：4个编码电机同时正转（PWM占空比 1023）。
+ *          - 下方向按钮（按住）：4个编码电机同时反转（PWM占空比 -1023）。
+ *          - Cross按钮（按住）：4个编码电机刹车（调用Stop方法），刹车优先级最高。
  *          - Square按钮（按下）：设置4个舵机角度为 0 度。
  *          - Triangle按钮（按下）：设置4个舵机角度为 90 度。
  *          - Circle按钮（按下）：设置4个舵机角度为 180 度。
  */
 /**
  * @~English
- * @brief Control 4 servos using CodexPad-S10 gamepad.
- * @details Control 4 servos with gamepad buttons:
+ * @brief Control 4 encoder motors and 4 servos using CodexPad-S10 gamepad.
+ * @details Control 4 encoder motors and 4 servos with gamepad buttons:
+ *          - Up button (holding): All 4 encoder motors run forward (PWM duty 1023).
+ *          - Down button (holding): All 4 encoder motors run backward (PWM duty -1023).
+ *          - Cross button (holding): All 4 encoder motors brake (call Stop method), brake has the highest priority.
  *          - Square button (pressed): Set all 4 servos to 0 degrees.
  *          - Triangle button (pressed): Set all 4 servos to 90 degrees.
- *         - Circle button (pressed): Set all 4 servos to 180 degrees.
+ *          - Circle button (pressed): Set all 4 servos to 180 degrees.
  */
 
 #include "codex_pad.h"
+#include "md40.h"
 #include "servo.h"
 
 namespace {
@@ -23,20 +30,40 @@ namespace {
 // Replace with your CodexPad device's Bluetooth device address.
 const std::string kBluetoothDeviceAddress = "16:00:00:00:03:27";
 
-constexpr gpio_num_t kServo0Pin = GPIO_NUM_26;  // 舵机0引脚。 | Servo 1 pin.
-constexpr gpio_num_t kServo1Pin = GPIO_NUM_25;  // 舵机1引脚。 | Servo 2 pin.
-constexpr gpio_num_t kServo2Pin = GPIO_NUM_33;  // 舵机2引脚。 | Servo 3 pin.
-constexpr gpio_num_t kServo3Pin = GPIO_NUM_32;  // 舵机3引脚。 | Servo 4 pin.
+constexpr gpio_num_t kI2cPinSda = GPIO_NUM_13;  // I2C 数据线引脚。 | I2C data pin.
+constexpr gpio_num_t kI2cPinScl = GPIO_NUM_12;  // I2C 时钟线引脚。 | I2C clock pin.
+
+constexpr gpio_num_t kServo0Pin = GPIO_NUM_42;  // 舵机0引脚。 | Servo 1 pin.
+constexpr gpio_num_t kServo1Pin = GPIO_NUM_43;  // 舵机1引脚。 | Servo 2 pin.
+constexpr gpio_num_t kServo2Pin = GPIO_NUM_44;  // 舵机2引脚。 | Servo 3 pin.
+constexpr gpio_num_t kServo3Pin = GPIO_NUM_48;  // 舵机3引脚。 | Servo 4 pin.
+
+constexpr uint16_t kEncoderPpr = 12;      // 每转脉冲数。 | Pulses per revolution.
+constexpr uint16_t kReductionRatio = 90;  // 减速比。 | Reduction ratio.
+// 编码电机正转时A相领先于B相。 | When the encoder motor runs forward, phase A leads phase B.
+constexpr auto kEncoderPhaseRelation = em::Md40::Motor::PhaseRelation::kAPhaseLeads;
+
+constexpr float kSpeedPidP = 1.5;      // 速度PID比例系数。 | Speed PID proportional coefficient.
+constexpr float kSpeedPidI = 1.5;      // 速度PID积分系数。 | Speed PID integral coefficient.
+constexpr float kSpeedPidD = 1.0;      // 速度PID微分系数。 | Speed PID derivative coefficient.
+constexpr float kPositionPidP = 10.0;  // 位置PID比例系数。 | Position PID proportional coefficient.
+constexpr float kPositionPidI = 1.0;   // 位置PID积分系数。 | Position PID integral coefficient.
+constexpr float kPositionPidD = 1.0;   // 位置PID微分系数。 | Position PID derivative coefficient.
+
+constexpr uint16_t kMotorRunPwmDuty = 1023;       // 电机运行时的PWM占空比。 | PWM duty when motor is running.
+constexpr uint32_t kMotorUpdateIntervalMs = 100;  // 电机更新间隔时间，单位毫秒。 | Motor update interval in milliseconds.
 
 constexpr uint8_t kServoAngleMax = 180;           // 舵机最大角度。 | Servo maximum angle.
 constexpr uint16_t kServoPulseWidthUsMin = 500;   // 最小脉宽，单位微秒。 | Minimum pulse width in microseconds
 constexpr uint16_t kServoPulseWidthUsMax = 2500;  // 最大脉宽，单位微秒。 | Maximum pulse width in microseconds
-
-constexpr uint8_t kServoUpdateIntervalMs = 100;  // 舵机更新间隔，单位毫秒。 | Servo update interval in milliseconds.
+constexpr uint8_t kServoUpdateIntervalMs = 100;   // 舵机更新间隔，单位毫秒。 | Servo update interval in milliseconds.
 
 constexpr uint32_t kConnectionTimeoutMs = 5000;  // 连接手柄超时时间，单位毫秒。 | Connection timeout for gamepad in milliseconds.
 
 uint32_t g_servo_last_update_time = 0;
+uint32_t g_motor_last_update_time = 0;
+
+em::Md40 g_md40(em::Md40::kDefaultI2cAddress, Wire);
 
 // 4个舵机对象。 | Servo objects.
 em::Servo g_servo_0(kServo0Pin, 0, kServoAngleMax, kServoPulseWidthUsMin, kServoPulseWidthUsMax);
@@ -74,6 +101,24 @@ void Connect() {
   printf("Connected.\n");
 }
 
+void Md40Init() {
+  printf("Md40 init, encoder motor mode.\n");
+  g_md40.Init();
+
+  // 设置Md40运行模式为编码电机模式，并初始停止。 | Set Md40 to run in encoder motor mode and initially stop.
+  for (uint8_t i = 0; i < em::Md40::kMotorNum; i++) {
+    g_md40[i].SetEncoderMode(kEncoderPpr, kReductionRatio, kEncoderPhaseRelation);
+    g_md40[i].set_speed_pid_p(kSpeedPidP);
+    g_md40[i].set_speed_pid_i(kSpeedPidI);
+    g_md40[i].set_speed_pid_d(kSpeedPidD);
+    g_md40[i].set_position_pid_p(kPositionPidP);
+    g_md40[i].set_position_pid_i(kPositionPidI);
+    g_md40[i].set_position_pid_d(kPositionPidD);
+
+    g_md40[i].RunPwmDuty(0);
+  }
+}
+
 void ServosInit() {
   printf("Servos init.\n");
   g_servo_0.Init();
@@ -101,6 +146,9 @@ void SetServosAngle(const uint8_t angle) {
 }  // namespace
 
 void setup() {
+  Wire.begin(kI2cPinSda, kI2cPinScl);
+
+  Md40Init();
   ServosInit();
 
   printf("CodexPad Init.\n");
@@ -122,6 +170,38 @@ void loop() {
     printf("Disconnected, start to reconnect.\n");
     Connect();
     return;
+  }
+
+  if (millis() - g_motor_last_update_time >= kMotorUpdateIntervalMs) {
+    if (g_codex_pad.holding(CodexPad::Button::kCrossA)) {
+      // Cross按钮：刹车 | Cross button: brake.
+      printf("Brake.\n");
+      for (uint8_t i = 0; i < em::Md40::kMotorNum; i++) {
+        g_md40[i].Stop();
+      }
+      g_motor_last_update_time = millis();
+    } else if (g_codex_pad.holding(CodexPad::Button::kUp) && !g_codex_pad.holding(CodexPad::Button::kDown)) {
+      // 上方向键：电机正转 | Up button: move forward.
+      printf("Forward.\n");
+      for (uint8_t i = 0; i < em::Md40::kMotorNum; i++) {
+        g_md40[i].RunPwmDuty(kMotorRunPwmDuty);
+      }
+      g_motor_last_update_time = millis();
+    } else if (g_codex_pad.holding(CodexPad::Button::kDown) && !g_codex_pad.holding(CodexPad::Button::kUp)) {
+      // 下方向键：电机反转 | Down button: move backward.
+      printf("Reverse.\n");
+      for (uint8_t i = 0; i < em::Md40::kMotorNum; i++) {
+        g_md40[i].RunPwmDuty(-kMotorRunPwmDuty);
+      }
+      g_motor_last_update_time = millis();
+    } else {
+      // 无输入：停止 | No input: stop.
+      printf("Stop.\n");
+      for (uint8_t i = 0; i < em::Md40::kMotorNum; i++) {
+        g_md40[i].RunPwmDuty(0);
+      }
+      g_motor_last_update_time = millis();
+    }
   }
 
   if (millis() - g_servo_last_update_time >= kServoUpdateIntervalMs) {

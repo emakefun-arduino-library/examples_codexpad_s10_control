@@ -51,6 +51,10 @@ constexpr uint32_t kReductionRatio = 90;  // 减速比。 | Reduction ratio.
 // 编码电机正转时B相领先于A相。 | When the encoder motor runs forward, phase B leads phase A.
 constexpr auto kEncoderPhaseRelation = em::EncoderMotor::kBPhaseLeads;
 
+constexpr float kSpeedPidP = 1.5;  // 速度PID比例系数。 | Speed PID proportional coefficient.
+constexpr float kSpeedPidI = 1.5;  // 速度PID积分系数。 | Speed PID integral coefficient.
+constexpr float kSpeedPidD = 1.0;  // 速度PID微分系数。 | Speed PID derivative coefficient.
+
 constexpr uint32_t kMotorUpdateIntervalMs = 100;  // 电机更新间隔时间，单位毫秒。 | Motor update interval in milliseconds.
 
 constexpr uint32_t kConnectionTimeoutMs = 5000;  // 连接手柄超时时间，单位毫秒。 | Connection timeout for gamepad in milliseconds.
@@ -123,6 +127,11 @@ void EncoderMotorInit() {
   g_encoder_motor_1.Init();
   g_encoder_motor_2.Init();
   g_encoder_motor_3.Init();
+
+  g_encoder_motor_0.SetSpeedPid(kSpeedPidP, kSpeedPidI, kSpeedPidD);
+  g_encoder_motor_1.SetSpeedPid(kSpeedPidP, kSpeedPidI, kSpeedPidD);
+  g_encoder_motor_2.SetSpeedPid(kSpeedPidP, kSpeedPidI, kSpeedPidD);
+  g_encoder_motor_3.SetSpeedPid(kSpeedPidP, kSpeedPidI, kSpeedPidD);
 
   g_encoder_motor_0.RunPwmDuty(0);
   g_encoder_motor_1.RunPwmDuty(0);

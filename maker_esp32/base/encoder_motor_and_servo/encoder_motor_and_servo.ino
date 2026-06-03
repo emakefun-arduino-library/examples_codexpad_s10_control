@@ -1,30 +1,40 @@
 /**
  * @~Chinese
- * @brief 使用CodexPad-S10手柄控制4个编码电机。
- * @details 通过手柄按钮控制4个编码电机的运行状态：
- *          - 上方向按钮（按住）：4个电机同时正转（PWM占空比 1023）。
- *          - 下方向按钮（按住）：4个电机同时反转（PWM占空比 -1023）。
- *          - Cross按钮（按住）：刹车（调用Stop方法），刹车优先级最高。
- *          - 无按钮输入时，所有电机停止（PWM占空比 0）。
+ * @brief 使用CodexPad-S10手柄控制4个编码电机和4个舵机。
+ * @details 通过手柄按钮控制编码4个电机和4个舵机：
+ *          - 上方向按钮（按住）：4个编码电机同时正转（PWM占空比 1023）。
+ *          - 下方向按钮（按住）：4个编码电机同时反转（PWM占空比 -1023）。
+ *          - Cross按钮（按住）：4个编码电机刹车（调用Stop方法），刹车优先级最高。
+ *          - Square按钮（按下）：设置4个舵机角度为 0 度。
+ *          - Triangle按钮（按下）：设置4个舵机角度为 90 度。
+ *          - Circle按钮（按下）：设置4个舵机角度为 180 度。
  */
 /**
  * @~English
- * @brief Control 4 encoder motors using CodexPad-S10 gamepad.
- * @details Control the running state of 4 encoder motors via gamepad buttons:
- *          - Up button (holding): All 4 motors run forward (PWM duty 1023).
- *          - Down button (holding): All 4 motors run backward (PWM duty -1023).
- *          - Cross button (holding): Brake (call Stop method), brake has the highest priority.
- *          - No button input: All motors stop (PWM duty 0).
+ * @brief Control 4 encoder motors and 4 servos using CodexPad-S10 gamepad.
+ * @details Control 4 encoder motors and 4 servos with gamepad buttons:
+ *          - Up button (holding): All 4 encoder motors run forward (PWM duty 1023).
+ *          - Down button (holding): All 4 encoder motors run backward (PWM duty -1023).
+ *          - Cross button (holding): All 4 encoder motors brake (call Stop method), brake has the highest priority.
+ *          - Square button (pressed): Set all 4 servos to 0 degrees.
+ *          - Triangle button (pressed): Set all 4 servos to 90 degrees.
+ *          - Circle button (pressed): Set all 4 servos to 180 degrees.
  */
 
 #include "codex_pad.h"
 #include "encoder_motor.h"
 #include "motor.h"
+#include "servo.h"
 
 namespace {
 // 替换为你的 CodexPad 的 Bluetooth device address。
 // Replace with your CodexPad device's Bluetooth device address.
 const std::string kBluetoothDeviceAddress = "16:00:00:00:03:27";
+
+constexpr gpio_num_t kServo0Pin = GPIO_NUM_26;  // 舵机0引脚。 | Servo 0 pin.
+constexpr gpio_num_t kServo1Pin = GPIO_NUM_25;  // 舵机1引脚。 | Servo 1 pin.
+constexpr gpio_num_t kServo2Pin = GPIO_NUM_33;  // 舵机2引脚。 | Servo 2 pin.
+constexpr gpio_num_t kServo3Pin = GPIO_NUM_32;  // 舵机3引脚。 | Servo 3 pin.
 
 constexpr gpio_num_t kEncoderMotor0PositivePin = GPIO_NUM_27;  // 编码电机0正极引脚。 | Encoder motor 0 positive pin.
 constexpr gpio_num_t kEncoderMotor0NegativePin = GPIO_NUM_13;  // 编码电机0负极引脚。 | Encoder motor 0 negative pin.
@@ -55,13 +65,25 @@ constexpr float kSpeedPidP = 1.5;  // 速度PID比例系数。 | Speed PID propo
 constexpr float kSpeedPidI = 1.5;  // 速度PID积分系数。 | Speed PID integral coefficient.
 constexpr float kSpeedPidD = 1.0;  // 速度PID微分系数。 | Speed PID derivative coefficient.
 
+constexpr uint8_t kServoAngleMax = 180;           // 舵机最大角度。 | Servo maximum angle.
+constexpr uint16_t kServoPulseWidthUsMin = 500;   // 最小脉宽，单位微秒。 | Minimum pulse width in microseconds
+constexpr uint16_t kServoPulseWidthUsMax = 2500;  // 最大脉宽，单位微秒。 | Maximum pulse width in microseconds
+
+constexpr uint8_t kServoUpdateIntervalMs = 100;   // 舵机更新间隔，单位毫秒。 | Servo update interval in milliseconds.
 constexpr uint32_t kMotorUpdateIntervalMs = 100;  // 电机更新间隔时间，单位毫秒。 | Motor update interval in milliseconds.
 
 constexpr uint32_t kConnectionTimeoutMs = 5000;  // 连接手柄超时时间，单位毫秒。 | Connection timeout for gamepad in milliseconds.
 
+uint32_t g_servo_last_update_time = 0;
 uint32_t g_motor_last_update_time = 0;
 
-// 四个编码电机对象。 | Four encoder motor objects.
+// 四个编码电机对象 | Four encoder motor objects
+em::Servo g_servo_0(kServo0Pin, 0, kServoAngleMax, kServoPulseWidthUsMin, kServoPulseWidthUsMax);
+em::Servo g_servo_1(kServo1Pin, 0, kServoAngleMax, kServoPulseWidthUsMin, kServoPulseWidthUsMax);
+em::Servo g_servo_2(kServo2Pin, 0, kServoAngleMax, kServoPulseWidthUsMin, kServoPulseWidthUsMax);
+em::Servo g_servo_3(kServo3Pin, 0, kServoAngleMax, kServoPulseWidthUsMin, kServoPulseWidthUsMax);
+
+// 四个编码电机对象 | Four encoder motor objects
 em::EncoderMotor g_encoder_motor_0(kEncoderMotor0PositivePin,
                                    kEncoderMotor0NegativePin,
                                    kEncoderMotor0EncoderPinA,
@@ -128,20 +150,46 @@ void EncoderMotorInit() {
   g_encoder_motor_2.Init();
   g_encoder_motor_3.Init();
 
-  g_encoder_motor_0.SetSpeedPid(kSpeedPidP, kSpeedPidI, kSpeedPidD);
-  g_encoder_motor_1.SetSpeedPid(kSpeedPidP, kSpeedPidI, kSpeedPidD);
-  g_encoder_motor_2.SetSpeedPid(kSpeedPidP, kSpeedPidI, kSpeedPidD);
-  g_encoder_motor_3.SetSpeedPid(kSpeedPidP, kSpeedPidI, kSpeedPidD);
-
   g_encoder_motor_0.RunPwmDuty(0);
   g_encoder_motor_1.RunPwmDuty(0);
   g_encoder_motor_2.RunPwmDuty(0);
   g_encoder_motor_3.RunPwmDuty(0);
 }
+
+void ServosInit() {
+  printf("Servos init.\n");
+  g_servo_0.Init();
+  g_servo_1.Init();
+  g_servo_2.Init();
+  g_servo_3.Init();
+
+  g_encoder_motor_0.SetSpeedPid(kSpeedPidP, kSpeedPidI, kSpeedPidD);
+  g_encoder_motor_1.SetSpeedPid(kSpeedPidP, kSpeedPidI, kSpeedPidD);
+  g_encoder_motor_2.SetSpeedPid(kSpeedPidP, kSpeedPidI, kSpeedPidD);
+  g_encoder_motor_3.SetSpeedPid(kSpeedPidP, kSpeedPidI, kSpeedPidD);
+
+  g_servo_0.Write(0);
+  g_servo_1.Write(0);
+  g_servo_2.Write(0);
+  g_servo_3.Write(0);
+}  // namespace
+
+void SetServosAngle(const uint8_t angle) {
+  if (angle > kServoAngleMax) {
+    printf("Invalid servo angle: %u. Must be between 0 and %u.\n", angle, kServoAngleMax);
+    return;
+  }
+  printf("Set all servos to %u degrees.\n", angle);
+  g_servo_0.Write(angle);
+  g_servo_1.Write(angle);
+  g_servo_2.Write(angle);
+  g_servo_3.Write(angle);
+}
 }  // namespace
 
 void setup() {
   EncoderMotorInit();
+  ServosInit();
 
   printf("CodexPad Init.\n");
   g_codex_pad.Init();
@@ -197,6 +245,26 @@ void loop() {
       g_encoder_motor_2.RunPwmDuty(0);
       g_encoder_motor_3.RunPwmDuty(0);
       g_motor_last_update_time = millis();
+    }
+  }
+
+  if (millis() - g_servo_last_update_time >= kServoUpdateIntervalMs) {
+    const bool square = g_codex_pad.pressed(CodexPad::Button::kSquareX);
+    const bool triangle = g_codex_pad.pressed(CodexPad::Button::kTriangleY);
+    const bool circle = g_codex_pad.pressed(CodexPad::Button::kCircleB);
+
+    if (square && !circle && !triangle) {
+      // Square按钮：设置舵机角度为0度 | Square button: set servo angle to 0 degrees.
+      SetServosAngle(0);
+      g_servo_last_update_time = millis();
+    } else if (triangle && !square && !circle) {
+      // Triangle按钮：设置舵机角度为90度 | Triangle button: set servo angle to 90 degrees.
+      SetServosAngle(90);
+      g_servo_last_update_time = millis();
+    } else if (circle && !square && !triangle) {
+      // Circle按钮：设置舵机角度为180度 | Circle button: set servo angle to 180 degrees.
+      SetServosAngle(180);
+      g_servo_last_update_time = millis();
     }
   }
 }

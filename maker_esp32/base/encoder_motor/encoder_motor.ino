@@ -46,10 +46,14 @@ constexpr gpio_num_t kEncoderMotor3NegativePin = GPIO_NUM_14;  // 编码电机3�
 constexpr gpio_num_t kEncoderMotor3EncoderPinA = GPIO_NUM_34;  // 编码电机3编码器A相引脚。 | Encoder motor 3 encoder phase A pin.
 constexpr gpio_num_t kEncoderMotor3EncoderPinB = GPIO_NUM_39;  // 编码电机3编码器B相引脚。 | Encoder motor 3 encoder phase B pin.
 
-constexpr uint32_t kPpr = 12;             // 每转脉冲数。 | Pulses per revolution.
+constexpr uint32_t kEncoderPpr = 12;      // 每转脉冲数。 | Pulses per revolution.
 constexpr uint32_t kReductionRatio = 90;  // 减速比。 | Reduction ratio.
 // 编码电机正转时B相领先于A相。 | When the encoder motor runs forward, phase B leads phase A.
 constexpr auto kEncoderPhaseRelation = em::EncoderMotor::kBPhaseLeads;
+
+constexpr float kSpeedPidP = 1.5;  // 速度PID比例系数。 | Speed PID proportional coefficient.
+constexpr float kSpeedPidI = 1.5;  // 速度PID积分系数。 | Speed PID integral coefficient.
+constexpr float kSpeedPidD = 1.0;  // 速度PID微分系数。 | Speed PID derivative coefficient.
 
 constexpr uint32_t kMotorUpdateIntervalMs = 100;  // 电机更新间隔时间，单位毫秒。 | Motor update interval in milliseconds.
 
@@ -62,28 +66,28 @@ em::EncoderMotor g_encoder_motor_0(kEncoderMotor0PositivePin,
                                    kEncoderMotor0NegativePin,
                                    kEncoderMotor0EncoderPinA,
                                    kEncoderMotor0EncoderPinB,
-                                   kPpr,
+                                   kEncoderPpr,
                                    kReductionRatio,
                                    kEncoderPhaseRelation);
 em::EncoderMotor g_encoder_motor_1(kEncoderMotor1PositivePin,
                                    kEncoderMotor1NegativePin,
                                    kEncoderMotor1EncoderPinA,
                                    kEncoderMotor1EncoderPinB,
-                                   kPpr,
+                                   kEncoderPpr,
                                    kReductionRatio,
                                    kEncoderPhaseRelation);
 em::EncoderMotor g_encoder_motor_2(kEncoderMotor2PositivePin,
                                    kEncoderMotor2NegativePin,
                                    kEncoderMotor2EncoderPinA,
                                    kEncoderMotor2EncoderPinB,
-                                   kPpr,
+                                   kEncoderPpr,
                                    kReductionRatio,
                                    kEncoderPhaseRelation);
 em::EncoderMotor g_encoder_motor_3(kEncoderMotor3PositivePin,
                                    kEncoderMotor3NegativePin,
                                    kEncoderMotor3EncoderPinA,
                                    kEncoderMotor3EncoderPinB,
-                                   kPpr,
+                                   kEncoderPpr,
                                    kReductionRatio,
                                    kEncoderPhaseRelation);
 
@@ -123,6 +127,11 @@ void EncoderMotorInit() {
   g_encoder_motor_1.Init();
   g_encoder_motor_2.Init();
   g_encoder_motor_3.Init();
+
+  g_encoder_motor_0.SetSpeedPid(kSpeedPidP, kSpeedPidI, kSpeedPidD);
+  g_encoder_motor_1.SetSpeedPid(kSpeedPidP, kSpeedPidI, kSpeedPidD);
+  g_encoder_motor_2.SetSpeedPid(kSpeedPidP, kSpeedPidI, kSpeedPidD);
+  g_encoder_motor_3.SetSpeedPid(kSpeedPidP, kSpeedPidI, kSpeedPidD);
 
   g_encoder_motor_0.RunPwmDuty(0);
   g_encoder_motor_1.RunPwmDuty(0);

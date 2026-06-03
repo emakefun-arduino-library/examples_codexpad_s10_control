@@ -23,16 +23,15 @@ namespace {
 // Replace with your CodexPad device's Bluetooth device address.
 const std::string kBluetoothDeviceAddress = "16:00:00:00:03:27";
 
-constexpr gpio_num_t kServo0Pin = GPIO_NUM_26;  // 舵机0引脚。 | Servo 1 pin.
-constexpr gpio_num_t kServo1Pin = GPIO_NUM_25;  // 舵机1引脚。 | Servo 2 pin.
-constexpr gpio_num_t kServo2Pin = GPIO_NUM_33;  // 舵机2引脚。 | Servo 3 pin.
-constexpr gpio_num_t kServo3Pin = GPIO_NUM_32;  // 舵机3引脚。 | Servo 4 pin.
+constexpr gpio_num_t kServo0Pin = GPIO_NUM_42;  // 舵机0引脚。 | Servo 0 pin.
+constexpr gpio_num_t kServo1Pin = GPIO_NUM_43;  // 舵机1引脚。 | Servo 1 pin.
+constexpr gpio_num_t kServo2Pin = GPIO_NUM_44;  // 舵机2引脚。 | Servo 2 pin.
+constexpr gpio_num_t kServo3Pin = GPIO_NUM_48;  // 舵机3引脚。 | Servo 3 pin.
 
 constexpr uint8_t kServoAngleMax = 180;           // 舵机最大角度。 | Servo maximum angle.
 constexpr uint16_t kServoPulseWidthUsMin = 500;   // 最小脉宽，单位微秒。 | Minimum pulse width in microseconds
 constexpr uint16_t kServoPulseWidthUsMax = 2500;  // 最大脉宽，单位微秒。 | Maximum pulse width in microseconds
-
-constexpr uint8_t kServoUpdateIntervalMs = 100;  // 舵机更新间隔，单位毫秒。 | Servo update interval in milliseconds.
+constexpr uint8_t kServoUpdateIntervalMs = 100;   // 舵机更新间隔，单位毫秒。 | Servo update interval in milliseconds.
 
 constexpr uint32_t kConnectionTimeoutMs = 5000;  // 连接手柄超时时间，单位毫秒。 | Connection timeout for gamepad in milliseconds.
 

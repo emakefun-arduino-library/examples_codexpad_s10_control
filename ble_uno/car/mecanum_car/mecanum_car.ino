@@ -1,0 +1,293 @@
+
+/**
+ * @~Chinese
+ * @brief 使用CodexPad-S10手柄控制麦克纳姆轮小车。
+ * @details 通过手柄按钮控制麦克纳姆轮小车的全向移动、速度调节和自旋转。
+ *          - 上方向按钮（按住）：前进。
+ *          - 下方向按钮（按住）：后退。
+ *          - 左方向按钮（按住）：左平移。
+ *          - 右方向按钮（按住）：右平移。
+ *          - 上+右（按住）：右前方45°移动。
+ *          - 下+左（按住）：左后方45°移动。
+ *          - 上+左（按住）：左前方45°移动。
+ *          - 下+右（按住）：右后方45°移动。
+ *          - Square按钮（按住）：原地逆时针旋转。
+ *          - Circle按钮（按住）：原地顺时针旋转。
+ *          - L1按钮（按下）：增加电机速度（每按一次+5，范围0-255）。
+ *          - R1按钮（按下）：降低电机速度（每按一次-5，范围0-255）。
+ *          - 无按钮输入时，所有电机刹车。
+ *
+ * @note 调试说明：
+ *       - 硬件串口（D0/D1）已被蓝牙模块占用，无法用于调试输出。
+ *       - SoftwareSerial软串口与Emakefun Motor Driver库存在冲突，无法同时使用。
+ *       - 因此本示例不包含任何串口调试输出，如需调试建议使用LED指示灯或蜂鸣器等方式。
+ */
+/**
+ * @~English
+ * @brief Control a Mecanum wheel car using the CodexPad-S10 gamepad.
+ * @details Control the omnidirectional movement, speed adjustment, and self-rotation of a Mecanum wheel car via gamepad buttons.
+ *          - Up button (holding): Move forward.
+ *          - Down button (holding): Move backward.
+ *          - Left button (holding): Strafe left.
+ *          - Right button (holding): Strafe right.
+ *          - Up + Right (holding): Move forward-right 45°.
+ *          - Down + Left (holding): Move backward-left 45°.
+ *          - Up + Left (holding): Move forward-left 45°.
+ *          - Down + Right (holding): Move backward-right 45°.
+ *          - Square button (holding): Rotate counterclockwise.
+ *          - Circle button (holding): Rotate clockwise.
+ *          - L1 button (pressed): Increase motor speed (+5 per press, range 0-255).
+ *          - R1 button (pressed): Decrease motor speed (-5 per press, range 0-255).
+ *          - No button input: All motors brake.
+ *
+ * @note Debugging Notes:
+ *       - The hardware serial (D0/D1) is occupied by the Bluetooth module and cannot be used for debug output.
+ *       - The SoftwareSerial soft serial port conflicts with the Emakefun Motor Driver library and cannot be used simultaneously.
+ *       - Therefore, this example does not include any serial debug output. For debugging, it is recommended to use LED indicators or buzzers
+ * instead.
+ */
+
+#include "Emakefun_MotorDriver.h"
+#include "codex_pad_frame_decoder.h"
+
+namespace {
+// 替换为你的 CodexPad 的 Bluetooth device address。
+// Replace with your CodexPad device's Bluetooth device address.
+const String kBluetoothDeviceAddress = "16:00:00:00:03:27";
+
+// 与蓝牙模块通信的串口波特率（请查阅模块数据手册，替换为模块对应的波特率）。
+// The serial port baud rate for communication with the Bluetooth module (please refer to the module data manual, replace with the corresponding baud
+// rate for the module).
+constexpr uint32_t kBluetoothModuleSerialBaudRate = 115200;
+
+constexpr uint8_t kLeftFrontMotorPort = M1;   // 左前轮电机口M1。 | Left front motor port M1.
+constexpr uint8_t kLeftBackMotorPort = M2;    // 左后轮电机口M2。 | Left back motor port M2.
+constexpr uint8_t kRightFrontMotorPort = M3;  // 右前轮电机口M3。 | Right front motor port M3.
+constexpr uint8_t kRightBackMotorPort = M4;   // 右后轮电机口M4。 | Right back motor port M4.
+
+constexpr uint8_t kMotorDriverI2CAddress = 0x60;  // 驱动板 I2C 地址。 | Driver board I2C address.
+constexpr uint8_t kPwmFrequency = 50;             // PWM 频率，单位 Hz。 | PWM frequency in Hz.
+
+constexpr uint8_t kMotorSpeedMin = 0;             // 电机最小速度值。 | Motor minimum speed value.
+constexpr uint8_t kMotorSpeedMax = 255;           // 电机最大速度值。 | Motor maximum speed value.
+constexpr uint8_t kMotorSpeedStep = 5;            // 电机速度每次调节步长。 | Motor speed adjustment step per press.
+constexpr uint32_t kMotorUpdateIntervalMs = 100;  // 电机更新间隔（毫秒） | Update interval in milliseconds.
+
+uint8_t g_motor_current_speed = 100;
+uint32_t g_motor_last_update_time = 0;
+
+Emakefun_MotorDriver g_motor_driver = Emakefun_MotorDriver(kMotorDriverI2CAddress);
+
+// 四个直流电机对象。 | Four DC motor objects.
+Emakefun_DCMotor *g_left_front_motor = g_motor_driver.getMotor(kLeftFrontMotorPort);
+Emakefun_DCMotor *g_left_back_motor = g_motor_driver.getMotor(kLeftBackMotorPort);
+Emakefun_DCMotor *g_right_front_motor = g_motor_driver.getMotor(kRightFrontMotorPort);
+Emakefun_DCMotor *g_right_back_motor = g_motor_driver.getMotor(kRightBackMotorPort);
+
+// 此处解码器传入的串口实例，与 Connect() 中传入的为同一个串口实例。
+// The serial instance passed in by the decoder here is the same as the one passed in Connect().
+CodexPadFrameDecoder g_codex_pad_frame_decoder(Serial);
+
+/**
+ * @~Chinese
+ * @brief 向蓝牙模块发送AT指令以建立BLE连接。
+ * @details 依次执行AT指令序列，将蓝牙模块配置为主机模式并连接到指定MAC地址的目标设备。
+ *          指令顺序：AT+DISCON → AT+RESET → AT+ECHO=0 → AT+ROLE=0 → AT+AUTOCON=0 → AT+CON=<mac>。
+ * @param[in] bluetooth_stream 连接蓝牙模块的Stream对象。
+ *                             注意：此对象必须与传入CodexPadFrameDecoder的Stream是同一个实例（如 Serial），
+ *                             因为解码器正是从这同一个串口读取手柄发来的数据。
+ * @param[in] bluetooth_device_address 目标设备的MAC地址，格式为 "XX:XX:XX:XX:XX:XX"。
+ */
+/**
+ * @~English
+ * @brief Send AT commands to the Bluetooth module to establish a BLE connection.
+ * @details Executes a sequence of AT commands to configure the Bluetooth module as master and connect to the target device
+ *          at the specified MAC address.
+ *          Command order: AT+DISCON → AT+RESET → AT+ECHO=0 → AT+ROLE=0 → AT+AUTOCON=0 → AT+CON=<mac>.
+ * @param[in] bluetooth_stream Stream connected to the Bluetooth module.
+ *                             Note: This must be the same Stream instance that is passed to the CodexPadFrameDecoder
+ *                             (e.g., Serial), as the decoder reads incoming data from this same serial port.
+ * @param[in] bluetooth_device_address MAC address of the target device in format "XX:XX:XX:XX:XX:XX".
+ */
+void Connect(Stream &bluetooth_stream, const String &bluetooth_device_address) {
+  if (bluetooth_device_address.length() != 17 || bluetooth_device_address[2] != ':' || bluetooth_device_address[5] != ':' ||
+      bluetooth_device_address[8] != ':' || bluetooth_device_address[11] != ':' || bluetooth_device_address[14] != ':') {
+    while (true) {
+    };
+  }
+
+  // 模块可能处于连接状态，先发送断开指令，确保模块是未连接状态。
+  // The module may be in a connected state. Send the disconnection command first to ensure the module is in an unconnected state.
+  bluetooth_stream.println("AT+DISCON");
+  delay(100);
+
+  // 软件复位蓝牙芯片，清除所有配对和配置数据。
+  // Software reset BLE chip, clear all pairing and configuration data.
+  bluetooth_stream.println("AT+RESET");
+  delay(100);
+
+  // 关闭AT信息回显。
+  // Close AT information echo.
+  bluetooth_stream.println("AT+ECHO=0");
+  delay(100);
+
+  // 设置模块为主机模式，使其能够主动连接从机蓝牙。
+  // Set the module to host mode so that it can actively connect to the BLE of the slave device.
+  bluetooth_stream.println("AT+ROLE=0");
+  delay(100);
+
+  // 关闭模块的蓝牙自动连接模式。
+  // Disable the module's automatic Bluetooth connection mode.
+  bluetooth_stream.println("AT+AUTOCON=0");
+  delay(100);
+
+  // 使用指定的MAC地址发起与从机蓝牙连接。
+  // Initiate BLE connection with the slave using the specified MAC address.
+  bluetooth_stream.print("AT+CON=");
+  bluetooth_stream.println(bluetooth_device_address);
+  delay(100);
+}
+}  // namespace
+
+void setup() {
+  g_motor_driver.begin(kPwmFrequency);
+
+  Serial.begin(kBluetoothModuleSerialBaudRate);
+  Connect(Serial, kBluetoothDeviceAddress);
+}
+
+void loop() {
+  // 重要：Update()方法必须在循环中尽可能频繁地调用，不能添加延时。
+  // 该方法负责处理所有接收到的蓝牙数据包，延时会导致数据丢失和响应延迟。
+  // 对于实时控制应用，必须保持高频率调用以确保及时响应手柄输入。
+  // Important: Update() method must be called as frequently as possible in the loop, no delays should be added.
+  // This method processes all received Bluetooth packets, delays will cause data loss and response lag.
+  // For real-time control applications, high-frequency calls are essential to ensure prompt response to gamepad input.
+  g_codex_pad_frame_decoder.Update();
+
+  if (g_codex_pad_frame_decoder.pressed(CodexPadFrameDecoder::Button::kL1)) {
+    // 增加电机速度（按下L1按键）。 | Increase motor speed (pressed L1 button).
+    g_motor_current_speed = constrain(g_motor_current_speed + kMotorSpeedStep, kMotorSpeedMin, kMotorSpeedMax);
+  } else if (g_codex_pad_frame_decoder.pressed(CodexPadFrameDecoder::Button::kR1)) {
+    // 降低电机速度（按下R1按键）。 | Decrease motor speed (pressed R1 button).
+    g_motor_current_speed = constrain(g_motor_current_speed - kMotorSpeedStep, kMotorSpeedMin, kMotorSpeedMax);
+  }
+
+  if (millis() - g_motor_last_update_time >= kMotorUpdateIntervalMs) {
+    const bool up = g_codex_pad_frame_decoder.holding(CodexPadFrameDecoder::Button::kUp);
+    const bool down = g_codex_pad_frame_decoder.holding(CodexPadFrameDecoder::Button::kDown);
+    const bool left = g_codex_pad_frame_decoder.holding(CodexPadFrameDecoder::Button::kLeft);
+    const bool right = g_codex_pad_frame_decoder.holding(CodexPadFrameDecoder::Button::kRight);
+
+    if (up && !left && !right) {
+      // 前进（单独按住上方向按钮）。 | Move forward (hold Up button only).
+      g_left_front_motor->setSpeed(g_motor_current_speed);
+      g_left_front_motor->run(BACKWARD);
+      g_left_back_motor->setSpeed(g_motor_current_speed);
+      g_left_back_motor->run(BACKWARD);
+      g_right_front_motor->setSpeed(g_motor_current_speed);
+      g_right_front_motor->run(FORWARD);
+      g_right_back_motor->setSpeed(g_motor_current_speed);
+      g_right_back_motor->run(FORWARD);
+      g_motor_last_update_time = millis();
+    } else if (down && !left && !right) {
+      // 后退（单独按住下方向按钮）。 | Move backward (hold Down button only).
+      g_left_front_motor->setSpeed(g_motor_current_speed);
+      g_left_front_motor->run(FORWARD);
+      g_left_back_motor->setSpeed(g_motor_current_speed);
+      g_left_back_motor->run(FORWARD);
+      g_right_front_motor->setSpeed(g_motor_current_speed);
+      g_right_front_motor->run(BACKWARD);
+      g_right_back_motor->setSpeed(g_motor_current_speed);
+      g_right_back_motor->run(BACKWARD);
+      g_motor_last_update_time = millis();
+    } else if (left && !up && !down) {
+      // 左平移（单独按住左方向按钮）。 | Strafe left (hold Left button only).
+      g_left_front_motor->setSpeed(g_motor_current_speed);
+      g_left_front_motor->run(FORWARD);
+      g_left_back_motor->setSpeed(g_motor_current_speed);
+      g_left_back_motor->run(BACKWARD);
+      g_right_front_motor->setSpeed(g_motor_current_speed);
+      g_right_front_motor->run(FORWARD);
+      g_right_back_motor->setSpeed(g_motor_current_speed);
+      g_right_back_motor->run(BACKWARD);
+      g_motor_last_update_time = millis();
+    } else if (right && !up && !down) {
+      // 右平移（单独按住右方向按钮）。 | Strafe right (hold Right button only).
+      g_left_front_motor->setSpeed(g_motor_current_speed);
+      g_left_front_motor->run(BACKWARD);
+      g_left_back_motor->setSpeed(g_motor_current_speed);
+      g_left_back_motor->run(FORWARD);
+      g_right_front_motor->setSpeed(g_motor_current_speed);
+      g_right_front_motor->run(BACKWARD);
+      g_right_back_motor->setSpeed(g_motor_current_speed);
+      g_right_back_motor->run(FORWARD);
+      g_motor_last_update_time = millis();
+    } else if (up && right) {
+      // 右前方45°移动（同时按住上方向和右方向按钮）。 | Move forward-right 45° (hold Up + Right button).
+      g_left_front_motor->setSpeed(g_motor_current_speed);
+      g_left_front_motor->run(BACKWARD);
+      g_left_back_motor->run(BRAKE);
+      g_right_front_motor->run(BRAKE);
+      g_right_back_motor->setSpeed(g_motor_current_speed);
+      g_right_back_motor->run(FORWARD);
+      g_motor_last_update_time = millis();
+    } else if (left && down) {
+      // 左后方45°移动（同时按住左方向和下方向按钮）。 | Move backward-left 45° (hold Left + Down button).
+      g_left_front_motor->setSpeed(g_motor_current_speed);
+      g_left_front_motor->run(FORWARD);
+      g_left_back_motor->run(BRAKE);
+      g_right_front_motor->run(BRAKE);
+      g_right_back_motor->setSpeed(g_motor_current_speed);
+      g_right_back_motor->run(BACKWARD);
+      g_motor_last_update_time = millis();
+    } else if (up && left) {
+      // 左前方45°移动（同时按住上方向和左方向按钮）。 | Move forward-left 45° (hold Up + Left button).
+      g_left_front_motor->run(BRAKE);
+      g_left_back_motor->setSpeed(g_motor_current_speed);
+      g_left_back_motor->run(BACKWARD);
+      g_right_front_motor->setSpeed(g_motor_current_speed);
+      g_right_front_motor->run(FORWARD);
+      g_right_back_motor->run(BRAKE);
+      g_motor_last_update_time = millis();
+    } else if (right && down) {
+      // 右后方45°移动（同时按住右方向和下方向按钮）。 | Move backward-right 45° (hold Right + Down button).
+      g_left_front_motor->run(BRAKE);
+      g_left_back_motor->setSpeed(g_motor_current_speed);
+      g_left_back_motor->run(FORWARD);
+      g_right_front_motor->setSpeed(g_motor_current_speed);
+      g_right_front_motor->run(BACKWARD);
+      g_right_back_motor->run(BRAKE);
+      g_motor_last_update_time = millis();
+    } else if (g_codex_pad_frame_decoder.button_state(CodexPadFrameDecoder::Button::kSquareX)) {
+      // 原地逆时针旋转（按住Square按钮）。 | Rotate counterclockwise (hold Square button).
+      g_left_front_motor->setSpeed(g_motor_current_speed);
+      g_left_front_motor->run(FORWARD);
+      g_left_back_motor->setSpeed(g_motor_current_speed);
+      g_left_back_motor->run(FORWARD);
+      g_right_front_motor->setSpeed(g_motor_current_speed);
+      g_right_front_motor->run(FORWARD);
+      g_right_back_motor->setSpeed(g_motor_current_speed);
+      g_right_back_motor->run(FORWARD);
+      g_motor_last_update_time = millis();
+    } else if (g_codex_pad_frame_decoder.button_state(CodexPadFrameDecoder::Button::kCircleB)) {
+      // 原地顺时针旋转（按住Circle按钮）。 | Rotate clockwise (hold Circle button).
+      g_left_front_motor->setSpeed(g_motor_current_speed);
+      g_left_front_motor->run(BACKWARD);
+      g_left_back_motor->setSpeed(g_motor_current_speed);
+      g_left_back_motor->run(BACKWARD);
+      g_right_front_motor->setSpeed(g_motor_current_speed);
+      g_right_front_motor->run(BACKWARD);
+      g_right_back_motor->setSpeed(g_motor_current_speed);
+      g_right_back_motor->run(BACKWARD);
+      g_motor_last_update_time = millis();
+    } else {
+      // 无方向输入：刹车。 | No direction input: brake.
+      g_left_front_motor->run(BRAKE);
+      g_right_front_motor->run(BRAKE);
+      g_left_back_motor->run(BRAKE);
+      g_right_back_motor->run(BRAKE);
+      g_motor_last_update_time = millis();
+    }
+  }
+}

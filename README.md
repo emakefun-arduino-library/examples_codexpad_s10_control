@@ -1,5 +1,3 @@
-# CodexPad-S10 手柄控制示例
+# CodexPad-S10 Controller Control Examples
 
-本仓库包含多个硬件平台的示例程序，演示如何使用 CodexPad-S10 蓝牙手柄 控制直流电机、编码电机、舵机及麦克纳姆轮小车等。
-
-待补充内容
+[中文](README.zh-CN.md)
